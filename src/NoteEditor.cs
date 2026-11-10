@@ -161,7 +161,7 @@ namespace WinStickies
         internal ThinScrollBar(NoteEditor target)
         {
             editor = target; TabStop = false; Cursor = Cursors.Default;
-            AccessibleRole = AccessibleRole.ScrollBar; AccessibleName = "正文滚动条";
+            AccessibleRole = AccessibleRole.ScrollBar; AccessibleName = Strings.BodyScrollBar;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             editor.ScrollMetricsChanged += Sync;
         }

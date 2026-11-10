@@ -16,6 +16,7 @@ namespace WinStickies
         internal event Action<NoteForm> CloseRequested;
         internal event Action<string> Error;
         private readonly ActionButton foldButton, modeButton, menuButton, closeButton;
+        private readonly PriorityButton priorityButton;
         private readonly ToolTip tips = new ToolTip();
         private readonly Timer resizeTimer = new Timer { Interval = 16 };
         private bool updating, ready, dragging, resizing;
@@ -26,7 +27,7 @@ namespace WinStickies
         private Point dragCursor;
         private Rectangle dragBounds;
         private int resizeEdge;
-        private string saveStatus = "已保存到本机";
+        private string saveStatus = Strings.SavedLocally;
         internal IntPtr DesktopParent { get; private set; }
         internal static int HeaderHeight { get { return Ui.S(38); } }
         internal static int MinNoteWidth { get { return Ui.S(200); } }
@@ -35,7 +36,8 @@ namespace WinStickies
         internal static int MinCollapsedHeight { get { return Ui.S(30); } }
         private int TitleHeight { get { return Note.Collapsed ? Height : HeaderHeight; } }
         private int ResizeBorder { get { return Ui.S(Note.Collapsed ? 6 : 8); } }
-        private int TitleAvailableWidth { get { return Math.Max(1, Width - Ui.S(142)); } }
+        private bool ShowModeButton { get { return Width >= Ui.S(260); } }
+        private int TitleAvailableWidth { get { return Math.Max(1, Width - Ui.S(ShowModeButton ? 177 : 142)); } }
         private int TitleTextMaxWidth { get { return Math.Max(1, TitleAvailableWidth - Math.Min(Ui.S(28), Math.Max(Ui.S(18), TitleAvailableWidth / 4))); } }
         internal Rectangle TitleTextBounds
         {
@@ -62,7 +64,7 @@ namespace WinStickies
             // WS_EX_TOOLWINDOW is set in CreateParams; avoid WinForms' hidden owner,
             // which otherwise interferes with switching between child and top-level HWNDs.
             ShowInTaskbar = true; StartPosition = FormStartPosition.Manual;
-            DoubleBuffered = true; KeyPreview = true; Icon = Ui.CreateIcon();
+            DoubleBuffered = true; KeyPreview = true; Icon = Ui.AppIcon;
             SetStyle(ControlStyles.ResizeRedraw, true);
             Note.ExpandedWidth = Math.Max(MinNoteWidth, Note.ExpandedWidth);
             Note.ExpandedHeight = Math.Max(MinNoteHeight, Note.ExpandedHeight);
@@ -73,13 +75,13 @@ namespace WinStickies
             Bounds = visible;
             Editor = new NoteEditor { BorderStyle = BorderStyle.None,
                 AcceptsTab = false, Font = Ui.Font(NoteEditor.BaseFontSize),
-                ForeColor = Ui.Ink, AccessibleName = "便签内容", MaxLength = 2000000 };
+                ForeColor = Ui.Ink, AccessibleName = Strings.NoteContent, MaxLength = 2000000 };
             Editor.LoadContent(note);
             Editor.TextChanged += delegate { CaptureContent(); };
             Editor.FormattingChanged += delegate { CaptureContent(); };
             Controls.Add(Editor);
             TitleEditor = new TextBox { BorderStyle = BorderStyle.FixedSingle, Font = Ui.Font(9, true),
-                ForeColor = Ui.Ink, AccessibleName = "便签标题", MaxLength = 200, Visible = false, TabStop = false };
+                ForeColor = Ui.Ink, AccessibleName = Strings.NoteTitle, MaxLength = 200, Visible = false, TabStop = false };
             TitleEditor.TextChanged += delegate
             {
                 if (editingTitle) UpdateTitle(Note.CleanTitle(TitleEditor.Text));
@@ -96,13 +98,15 @@ namespace WinStickies
             modeButton = new ActionButton("", Ui.ModeIcon(Note.Mode), delegate { ShowModeMenu(); });
             menuButton = new ActionButton("", "dots", delegate { ShowNoteMenu(); });
             closeButton = new ActionButton("", "close", delegate { if (CloseRequested != null) CloseRequested(this); });
-            Controls.AddRange(new Control[] { foldButton, modeButton, menuButton, closeButton });
-            modeButton.AccessibleName = "显示模式"; menuButton.AccessibleName = "便签菜单";
-            closeButton.AccessibleName = "关闭便签";
-            tips.SetToolTip(closeButton, "关闭便签：选择删除或归档");
-            tips.SetToolTip(menuButton, "字号、颜色与更多操作");
-            tips.SetToolTip(this, "双击标题文字修改；双击标题旁空白展开或收起；拖动标题栏移动，拖动边缘调整大小");
-            tips.SetToolTip(TitleEditor, "Enter 完成，Esc 取消；清空标题后自动使用正文首行");
+            priorityButton = new PriorityButton(note, SetPriority);
+            Controls.AddRange(new Control[] { foldButton, modeButton, menuButton, closeButton, priorityButton });
+            tips.SetToolTip(priorityButton, Strings.PriorityTooltip);
+            modeButton.AccessibleName = Strings.DisplayMode; menuButton.AccessibleName = Strings.NoteMenu;
+            closeButton.AccessibleName = Strings.CloseNote;
+            tips.SetToolTip(closeButton, Strings.CloseTooltip);
+            tips.SetToolTip(menuButton, Strings.MenuTooltip);
+            tips.SetToolTip(this, Strings.NoteTooltip);
+            tips.SetToolTip(TitleEditor, Strings.TitleTooltip);
             ApplyAppearance();
         }
 
@@ -142,6 +146,13 @@ namespace WinStickies
             if (Note.FontSize == size) return;
             Note.FontSize = size; Note.ModifiedUtc = DateTime.UtcNow;
             Editor.SetBodyFontSize(size); SignalChange();
+        }
+        internal void SetPriority(int value)
+        {
+            value = Note.NormalizePriority(value);
+            if (Note.Priority == value) return;
+            Note.Priority = value; Note.ModifiedUtc = DateTime.UtcNow;
+            priorityButton.RefreshPriority(); SignalChange();
         }
         private void StepFontSize(bool larger)
         {
@@ -227,29 +238,30 @@ namespace WinStickies
             if (Note.Mode == NoteMode.Desktop)
             {
                 // Never raise the desktop host above application windows.
-                if (Error != null) Error("这张便签位于桌面层。按 Win+D 查看桌面，或在卡片菜单切换为普通悬浮。");
+                if (Error != null) Error(Strings.DesktopRevealHint);
             }
             else { Show(); Native.SetForegroundWindow(Handle); Editor.Focus(); }
         }
         internal void SetSaveStatus(bool success)
-        { saveStatus = success ? "已保存到本机" : "保存失败 · 请查看总览"; Invalidate(); }
-        private void SignalChange() { saveStatus = "正在保存…"; if (Changed != null) Changed(this); }
+        { saveStatus = success ? Strings.SavedLocally : Strings.SaveFailedStatus; Invalidate(); }
+        private void SignalChange() { saveStatus = Strings.Saving; if (Changed != null) Changed(this); }
         private void ApplyAppearance()
         {
             BackColor = Ui.Papers[Note.ColorIndex]; Editor.BackColor = BackColor; Editor.Visible = !Note.Collapsed;
             TitleEditor.BackColor = BackColor;
+            priorityButton.BackColor = BackColor;
             ScrollBar.BackColor = BackColor; ScrollBar.Visible = !Note.Collapsed && Editor.MaximumLine > 0;
             foreach (var b in new[] { foldButton, modeButton, menuButton, closeButton }) { b.BackColor = BackColor; b.Quiet = true; }
             foldButton.Glyph = Note.Collapsed ? "down" : "up";
-            foldButton.AccessibleName = Note.Collapsed ? "展开便签" : "收起便签";
-            tips.SetToolTip(foldButton, (Note.Collapsed ? "展开便签" : "收起为标题栏") + "  Ctrl+Shift+C");
+            foldButton.AccessibleName = Note.Collapsed ? Strings.ExpandNote : Strings.CollapseNote;
+            tips.SetToolTip(foldButton, (Note.Collapsed ? Strings.ExpandNote : Strings.CollapseToTitle) + "  Ctrl+Shift+C");
             modeButton.Glyph = Ui.ModeIcon(Note.Mode);
             tips.SetToolTip(modeButton, Ui.ModeName(Note.Mode) + "：" + Ui.ModeDescription(Note.Mode));
             LayoutChildren(); Invalidate(true);
         }
         private void LayoutChildren()
         {
-            if (Editor == null || closeButton == null) return;
+            if (Editor == null || priorityButton == null) return;
             SuspendLayout();
             try
             {
@@ -257,6 +269,9 @@ namespace WinStickies
                 int y = (TitleHeight - buttonHeight) / 2;
                 foldButton.SetBounds(Ui.S(9), y, Ui.S(26), buttonHeight);
                 modeButton.SetBounds(Width - Ui.S(95), y, Ui.S(26), buttonHeight);
+                // Compact notes keep their title space; display modes remain in the menu.
+                modeButton.Visible = ShowModeButton;
+                priorityButton.SetBounds(Width - Ui.S(ShowModeButton ? 130 : 95), y, Ui.S(ShowModeButton ? 30 : 26), buttonHeight);
                 menuButton.SetBounds(Width - Ui.S(66), y, Ui.S(26), buttonHeight);
                 closeButton.SetBounds(Width - Ui.S(37), y, Ui.S(26), buttonHeight);
                 TitleEditor.SetBounds(Ui.S(41), (TitleHeight - TitleEditor.PreferredHeight) / 2,
@@ -282,7 +297,7 @@ namespace WinStickies
             {
                 Ui.Icon(g, Ui.ModeIcon(Note.Mode), Ui.Ink, new Rectangle(Ui.S(18), Height - Ui.S(25), Ui.S(13), Ui.S(13)));
                 bool wide = Width >= Ui.S(280);
-                if (wide) Ui.Text(g, Ui.ModeName(Note.Mode), Ui.Font(7.75f), Ui.Ink, new Rectangle(Ui.S(37), Height - Ui.S(27), Ui.S(75), Ui.S(18)), TextFormatFlags.VerticalCenter);
+                if (wide) Ui.Text(g, Ui.ModeName(Note.Mode), Ui.Font(7.75f), Ui.Ink, new Rectangle(Ui.S(37), Height - Ui.S(27), Ui.S(96), Ui.S(18)), TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
                 int statusX = wide ? Width - Ui.S(142) : Ui.S(38);
                 Ui.Text(g, saveStatus, Ui.Font(7.5f), Ui.Ink, new Rectangle(statusX, Height - Ui.S(27), Math.Max(1, Width - statusX - Ui.S(24)), Ui.S(18)), TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
@@ -380,36 +395,37 @@ namespace WinStickies
             if (!modesOnly)
             {
                 if (includeModes) menu.Items.Add(new ToolStripSeparator());
-                var colors = new ToolStripMenuItem("便签颜色");
+                menu.Items.Add(PriorityMenu.Create(Note, SetPriority));
+                var colors = new ToolStripMenuItem(Strings.NoteColor);
                 for (int i = 0; i < Ui.Papers.Length; i++)
                 {
                     int index = i; var item = new ToolStripMenuItem(Ui.ColorNames[i]) { Checked = Note.ColorIndex == i };
                     item.Click += delegate { Note.ColorIndex = index; ApplyAppearance(); SignalChange(); }; colors.DropDownItems.Add(item);
                 }
                 menu.Items.Add(colors);
-                var sizes = new ToolStripMenuItem("正文字号");
+                var sizes = new ToolStripMenuItem(Strings.FontSize);
                 foreach (float value in FontSizes)
                 {
                     float size = value;
-                    var item = new ToolStripMenuItem(size.ToString("0.##") + " 磅" + (size == Note.DefaultFontSize ? "（默认）" : ""))
+                    var item = new ToolStripMenuItem(size.ToString("0.##") + Strings.PointSuffix + (size == Note.DefaultFontSize ? Strings.DefaultFontSuffix : ""))
                         { Checked = Note.FontSize == size };
                     item.Click += delegate { SetFontSize(size); }; sizes.DropDownItems.Add(item);
                 }
                 menu.Items.Add(sizes);
-                menu.Items.Add("修改标题    F2", null, delegate { BeginTitleEdit(); });
-                menu.Items.Add(Note.Collapsed ? "展开便签" : "收起便签", null, delegate { SetCollapsed(!Note.Collapsed); });
-                menu.Items.Add("归档便签", null, delegate { if (ArchiveRequested != null) ArchiveRequested(this); });
-                menu.Items.Add("新建便签    Ctrl+N", null, delegate { if (NewRequested != null) NewRequested(this); });
-                menu.Items.Add("便签总览    Ctrl+Shift+L", null, delegate { if (LibraryRequested != null) LibraryRequested(this); });
+                menu.Items.Add(Strings.EditTitleShortcut, null, delegate { BeginTitleEdit(); });
+                menu.Items.Add(Note.Collapsed ? Strings.ExpandNote : Strings.CollapseNote, null, delegate { SetCollapsed(!Note.Collapsed); });
+                menu.Items.Add(Strings.ArchiveNote, null, delegate { if (ArchiveRequested != null) ArchiveRequested(this); });
+                menu.Items.Add(Strings.NewNoteShortcut, null, delegate { if (NewRequested != null) NewRequested(this); });
+                menu.Items.Add(Strings.OverviewShortcut, null, delegate { if (LibraryRequested != null) LibraryRequested(this); });
                 menu.Items.Add(new ToolStripSeparator());
-                menu.Items.Add("删除这张便签…", null, delegate { if (DeleteRequested != null) DeleteRequested(this); });
+                menu.Items.Add(Strings.DeleteThisNote, null, delegate { if (DeleteRequested != null) DeleteRequested(this); });
             }
             // The note itself may be disposed by the archive/delete action.
             menu.Closed += delegate { menu.BeginInvoke((Action)delegate { menu.Dispose(); }); };
             return menu;
         }
         private void ShowModeMenu() { BuildMenu(true).Show(modeButton, new Point(0, modeButton.Height)); }
-        private void ShowNoteMenu() { BuildMenu(false, false).Show(menuButton, new Point(menuButton.Width, menuButton.Height), ToolStripDropDownDirection.BelowLeft); }
+        private void ShowNoteMenu() { BuildMenu(false, !ShowModeButton).Show(menuButton, new Point(menuButton.Width, menuButton.Height), ToolStripDropDownDirection.BelowLeft); }
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (editingTitle && (keyData == Keys.Enter || keyData == Keys.Escape))

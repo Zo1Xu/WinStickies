@@ -101,13 +101,13 @@ namespace WinStickies
         {
             IntPtr host = mode == NoteMode.Desktop ? DesktopHost() : IntPtr.Zero;
             if (mode == NoteMode.Desktop && host == IntPtr.Zero)
-                throw new InvalidOperationException("暂时找不到 Windows 桌面，请等待资源管理器启动后重试。");
+                throw new InvalidOperationException(Strings.DesktopUnavailable);
             if (host != IntPtr.Zero)
             {
                 try
                 {
                     if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(hwnd), GetWindowDpiAwarenessContext(host)))
-                        throw new InvalidOperationException("桌面的显示缩放设置已变化，请重启便签后再附着。");
+                        throw new InvalidOperationException(Strings.DesktopScaleChanged);
                 }
                 catch (EntryPointNotFoundException) { }
             }

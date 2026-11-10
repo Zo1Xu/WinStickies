@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Runtime.Serialization;
+using System.Text;
 
 namespace WinStickies
 {
@@ -18,6 +19,8 @@ namespace WinStickies
     public sealed class Note
     {
         public const float DefaultFontSize = 11.25f;
+        public const int DefaultPriority = 2;
+        [DataMember] public int Priority = DefaultPriority;
         [DataMember] public string Id = Guid.NewGuid().ToString("N");
         [DataMember] public string Content = "";
         [DataMember(EmitDefaultValue = false)] public string ContentRtf;
@@ -42,10 +45,36 @@ namespace WinStickies
             get
             {
                 if (!string.IsNullOrWhiteSpace(CustomTitle)) return CustomTitle;
-                string title = (Content ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(s => s.Trim()).FirstOrDefault(s => s.Length > 0);
-                return string.IsNullOrEmpty(title) ? "未命名便签" : title;
+                string content = Content ?? "";
+                int start = 0;
+                while (start < content.Length && char.IsWhiteSpace(content[start])) start++;
+                if (start == content.Length) return Strings.UntitledNote;
+                int end = start;
+                while (end < content.Length && content[end] != '\r' && content[end] != '\n') end++;
+                while (end > start && char.IsWhiteSpace(content[end - 1])) end--;
+                // The rest of the document never needs to be split or copied for a title.
+                return content.Substring(start, end - start);
             }
+        }
+
+        internal string Preview(int maxLength)
+        {
+            if (maxLength <= 0) return "";
+            string content = Content ?? "";
+            int start = 0;
+            while (start < content.Length && char.IsWhiteSpace(content[start])) start++;
+            if (string.IsNullOrWhiteSpace(CustomTitle))
+            {
+                // Match the overview's first-line omission, including CRLF input.
+                while (start < content.Length && content[start] != '\n') start++;
+                while (start < content.Length && char.IsWhiteSpace(content[start])) start++;
+            }
+            var preview = new StringBuilder(Math.Min(maxLength, content.Length - start));
+            for (int i = start; i < content.Length && preview.Length < maxLength; i++)
+                if (content[i] != '\r') preview.Append(content[i]);
+            // Do not cut an emoji between its UTF-16 surrogate pair.
+            if (preview.Length > 0 && char.IsHighSurrogate(preview[preview.Length - 1])) preview.Length--;
+            return preview.ToString().TrimEnd();
         }
 
         public Rectangle VisibleBounds(int titleHeight)
@@ -72,6 +101,7 @@ namespace WinStickies
 
         public void Normalize()
         {
+            Priority = NormalizePriority(Priority);
             if (string.IsNullOrEmpty(Id)) Id = Guid.NewGuid().ToString("N");
             if (Content == null) Content = "";
             CustomTitle = CleanTitle(CustomTitle);
@@ -89,6 +119,13 @@ namespace WinStickies
 
         internal static float NormalizeFontSize(float value)
         { return float.IsNaN(value) || float.IsInfinity(value) || value <= 0 ? DefaultFontSize : Math.Max(9, Math.Min(36, value)); }
+
+        internal static int NormalizePriority(int value)
+        { return value >= 0 && value <= 3 ? value : DefaultPriority; }
+
+        // DataContract deserialization bypasses field initializers. Old notes are P2, not P0.
+        [OnDeserializing]
+        private void InitializePriority(StreamingContext context) { Priority = DefaultPriority; }
     }
 
     [DataContract]
@@ -98,6 +135,13 @@ namespace WinStickies
         // Missing in the original release; deserialization leaves it at zero.
         [DataMember] public int StartupRevision = 1;
         [DataMember] public List<Note> Notes = new List<Note>();
+        [DataMember] public bool SortByPriority;
+
+        internal IEnumerable<Note> OrderedNotes
+        {
+            // OrderBy is stable: ties retain notebook order without rewriting the list.
+            get { return SortByPriority ? Notes.OrderBy(n => n.Priority) : (IEnumerable<Note>)Notes; }
+        }
     }
 
     public static class Placement

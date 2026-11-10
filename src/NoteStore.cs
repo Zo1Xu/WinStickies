@@ -33,7 +33,7 @@ namespace WinStickies
             try
             {
                 var restored = Read(FilePath + ".bak");
-                LoadWarning = "已从上次备份恢复便签。原文件已保留。";
+                LoadWarning = Strings.BackupRecovered;
                 return restored;
             }
             catch (Exception ex)
@@ -46,11 +46,11 @@ namespace WinStickies
                     var pending = Read(FilePath + ".tmp");
                     if (File.Exists(FilePath)) File.Replace(FilePath + ".tmp", FilePath, FilePath + ".bak", true);
                     else File.Move(FilePath + ".tmp", FilePath);
-                    LoadWarning = "已恢复上次未完成的保存，临时文件已清理。";
+                    LoadWarning = Strings.PendingRecovered;
                     return pending;
                 }
                 // Do not silently overwrite both damaged copies with an empty notebook.
-                throw new InvalidDataException("便签文件和备份均无法读取。原文件已保留在：" + FilePath, original);
+                throw new InvalidDataException(Strings.UnreadableNotes + FilePath, original);
             }
         }
 
@@ -65,10 +65,10 @@ namespace WinStickies
             {
                 var book = new DataContractJsonSerializer(typeof(Notebook)).ReadObject(stream) as Notebook;
                 if (book == null || book.Notes == null || book.Version != 1 || book.Notes.Any(n => n == null))
-                    throw new SerializationException("不支持的便签文件格式。");
+                    throw new SerializationException(Strings.UnsupportedFormat);
                 foreach (var note in book.Notes) note.Normalize();
                 if (book.Notes.Select(n => n.Id).Distinct().Count() != book.Notes.Count)
-                    throw new SerializationException("便签 ID 重复。");
+                    throw new SerializationException(Strings.DuplicateIds);
                 return book;
             }
         }
@@ -173,7 +173,7 @@ namespace WinStickies
                 using (var stream = new FileStream(backup, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
                     // Restoring this snapshot must not immediately remove its examples again.
-                    var snapshot = new Notebook { Version = book.Version, StartupRevision = 1, Notes = book.Notes.ToList() };
+                    var snapshot = new Notebook { Version = book.Version, StartupRevision = 1, Notes = book.Notes.ToList(), SortByPriority = book.SortByPriority };
                     new DataContractJsonSerializer(typeof(Notebook)).WriteObject(stream, snapshot);
                     stream.Flush(true);
                 }

@@ -20,6 +20,8 @@ namespace WinStickies
             int exitCode = 0;
             try
             {
+                results.Add("INFO: Process architecture=" + (IntPtr.Size * 8) + "-bit.");
+                CheckLanguage();
                 string runFolder = Path.Combine(folder, "run-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff"));
                 var store = new NoteStore(runFolder); var book = store.Load();
                 Check(store.IsNew && book.Notes.Count == 0, "first run starts with a new notebook");
@@ -139,7 +141,7 @@ namespace WinStickies
                 Check(app.Book.Notes.Count == 0 && app.Library == null, "first launch creates no notes and does not instantiate a library window");
                 Check(!app.IsShellMonitorRunning, "empty tray-only application does not poll the desktop");
                 var notification = (NotifyIcon)typeof(StickyContext).GetField("tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(app);
-                Check(notification.Visible && notification.BalloonTipTitle == "WinStickies 启动成功" && notification.BalloonTipText.Contains("双击托盘图标新建便签"),
+                Check(notification.Visible && notification.BalloonTipTitle == Strings.StartupSuccess && notification.BalloonTipText.Contains(Strings.StartupBody),
                     "successful first launch shows a tray startup notification with usage guidance");
                 int relaunchSignals = 0;
                 using (var relaunchListener = new MessageSink(Native.RegisterWindowMessage("WinStickies.Activate." + instanceIdentity),
@@ -157,43 +159,43 @@ namespace WinStickies
                             Check(finished && duplicate.ExitCode == 0, "second executable launch exits without starting another instance");
                         }
                         Application.DoEvents();
-                        Check(relaunchSignals == 1 && notification.BalloonTipTitle == "WinStickies 已在运行" &&
+                        Check(relaunchSignals == 1 && notification.BalloonTipTitle == Strings.AlreadyRunning &&
                             !app.TrayMenu.Visible && app.Library == null && app.Book.Notes.Count == 0,
                             "second launch triggers one running-instance notification without opening a menu, library or note");
                     }
                     finally { instanceMutex.ReleaseMutex(); }
                 }
                 app.PrepareTrayMenu();
-                Check(!app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "我的便签").Enabled, "empty tray menu disables note-specific actions");
+                Check(!app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes).Enabled, "empty tray menu disables note-specific actions");
                 string[] testTitles = { "快速记录", "今天要做", "灵感草稿", "稍后处理", "随手记下" };
                 for (int i = 0; i < 5; i++)
                 {
-                    app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "新建便签").PerformClick();
+                    app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == Strings.NewNote).PerformClick();
                     app.WindowFor(app.Book.Notes.Last().Id).Editor.Text = testTitles[i] + "\r\n\r\n" + (i == 2 ? "还没成形的想法。" : "这是一张用户主动创建的便签。");
                 }
                 Check(app.Book.Notes.Count == 5 && app.Library == null, "tray new-note action creates only the requested notes without loading the library");
                 Check(app.IsShellMonitorRunning, "desktop recovery monitor starts when notes exist");
                 app.PrepareTrayMenu();
-                var noteEntries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "我的便签");
+                var noteEntries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes);
                 Check(noteEntries.DropDownItems.Count == 5, "tray note list reflects all user-created notes");
                 var firstEntry = (ToolStripMenuItem)noteEntries.DropDownItems[0];
-                firstEntry.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == "始终置顶").PerformClick();
+                firstEntry.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Topmost).PerformClick();
                 Check(app.Book.Notes[0].Mode == NoteMode.Topmost && app.Library == null, "tray changes individual note mode without opening a library");
-                firstEntry.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == "普通悬浮").PerformClick();
+                firstEntry.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Floating).PerformClick();
                 app.ShowTrayMenu(); Application.DoEvents();
                 using (var bitmap = new Bitmap(app.TrayMenu.Width, app.TrayMenu.Height))
                 { app.TrayMenu.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(folder, "tray-menu-preview.png")); }
                 app.TrayMenu.Close();
-                app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "全部收起（保留标题栏）").PerformClick();
+                app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.CollapseAllTray).PerformClick();
                 Check(app.Book.Notes.All(n => n.Collapsed && Native.IsWindowVisible(app.WindowFor(n.Id).Handle)) && app.Library == null, "tray collapses all notes into visible independent title bars without a library");
-                app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "全部展开").PerformClick();
+                app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.ExpandAll).PerformClick();
                 Check(app.Book.Notes.All(n => !n.Collapsed), "tray expands all notes");
-                app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "便签总览…").PerformClick();
+                app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.OverviewMenu).PerformClick();
                 Check(app.Library != null && app.Library.Visible, "library is created only when explicitly requested");
                 using (var bitmap = new Bitmap(app.Library.Width, app.Library.Height))
                 { app.Library.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(folder, "library-preview.png")); }
                 var appBounds = app.Book.Notes.Select(n => n.VisibleBounds(NoteForm.HeaderHeight)).ToArray();
-                var collapse = app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == "全部收起");
+                var collapse = app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == Strings.CollapseAll);
                 collapse.PerformClick(); Application.DoEvents();
                 Check(app.Book.Notes.All(n => n.Collapsed) && app.Book.Notes.All(n => Native.IsWindowVisible(app.WindowFor(n.Id).Handle)), "library collapse-all button keeps all five notes visible");
                 int stripWidth = app.Book.Notes.Max(n => n.ExpandedWidth);
@@ -209,7 +211,7 @@ namespace WinStickies
                     }
                     bitmap.Save(Path.Combine(folder, "collapsed-preview.png"));
                 }
-                app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == "全部展开").PerformClick(); Application.DoEvents();
+                app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == Strings.ExpandAll).PerformClick(); Application.DoEvents();
                 Check(app.Book.Notes.Select((n, i) => Native.Bounds(app.WindowFor(n.Id).Handle) == appBounds[i]).All(b => b), "library expand-all button restores every note's own bounds");
                 var search = app.Library.Controls.OfType<TextBox>().Single(); search.Text = "还没成形"; Application.DoEvents();
                 Check(app.Library.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<NoteCard>().Count() == 1, "library search filters matching note content");
@@ -236,7 +238,7 @@ namespace WinStickies
                 Application.DoEvents();
                 Check(app.Book.Notes.Count == 6 && app.Book.Notes.All(n => n.Collapsed && Native.Bounds(app.WindowFor(n.Id).Handle).Height == NoteForm.HeaderHeight) && app.Library == null, "restart restores only existing title bars without launching a library");
                 notification = (NotifyIcon)typeof(StickyContext).GetField("tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(app);
-                Check(notification.BalloonTipTitle == "WinStickies 启动成功", "startup success notification also appears when reopening an existing notebook");
+                Check(notification.BalloonTipTitle == Strings.StartupSuccess, "startup success notification also appears when reopening an existing notebook");
                 app.Quit(); app = null;
                 var untouchedFolder = Path.Combine(runFolder, "untouched-demo-upgrade");
                 new NoteStore(untouchedFolder).Save(new Notebook { StartupRevision = 0, Notes = LegacySamples.Content.Select(s => new Note { Content = s }).ToList() });
@@ -265,7 +267,7 @@ namespace WinStickies
                     using (var menu = window.BuildMenu(false, false))
                     {
                         menu.Show(window, new Point(0, NoteForm.HeaderHeight));
-                        menu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "归档便签").PerformClick();
+                        menu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == Strings.ArchiveNote).PerformClick();
                         menu.Close(); Application.DoEvents();
                         Check(window.IsDisposed && !Native.IsWindow(archiveHandles.Last()) && menu.IsDisposed,
                             "archive menu closes and disposes the native note window and menu safely: " + i);
@@ -286,15 +288,15 @@ namespace WinStickies
                 Check(app.ActiveWindowCount == 0 && app.Book.Notes.All(n => n.Archived && n.Collapsed == archiveStates[n.Id]),
                     "global collapse, expand and shell recovery leave archives hidden with their original collapse states");
                 app.PrepareTrayMenu();
-                var archiveEntries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "已归档");
+                var archiveEntries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Archived);
                 Check(archiveEntries.Enabled && archiveEntries.DropDownItems.Count == modeCount &&
-                    !app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "我的便签").Enabled &&
-                    !app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "全部展开").Enabled,
+                    !app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes).Enabled &&
+                    !app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.ExpandAll).Enabled,
                     "tray separates archived notes and disables active-note actions when only archives remain");
                 app.ShowLibrary();
                 var archiveCards = app.Library.Controls.OfType<FlowLayoutPanel>().Single();
                 Check(!archiveCards.Controls.OfType<NoteCard>().Any(), "default library view excludes archived notes");
-                app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == "已归档").PerformClick();
+                app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == Strings.Archived).PerformClick();
                 var archiveSearch = app.Library.Controls.OfType<TextBox>().Single(); archiveSearch.Text = "归档测试 1";
                 Check(archiveCards.Controls.OfType<NoteCard>().Count() == 1 && app.ActiveWindowCount == 0,
                     "archive search previews saved content without creating note windows");
@@ -308,7 +310,7 @@ namespace WinStickies
                 archiveSearch.Text = "";
                 using (var bitmap = new Bitmap(app.Library.Width, app.Library.Height))
                 { app.Library.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(folder, "archive-preview.png")); }
-                archiveCards.Controls.OfType<NoteCard>().First().Controls.OfType<ActionButton>().Single(b => b.AccessibleName == "重新打开便签").PerformClick();
+                archiveCards.Controls.OfType<NoteCard>().First().Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.ReopenNote).PerformClick();
                 Check(!app.Book.Notes[0].Archived && app.ActiveWindowCount == 1 && app.IsShellMonitorRunning &&
                     Native.Bounds(app.WindowFor(app.Book.Notes[0].Id).Handle) == archiveBounds[app.Book.Notes[0].Id],
                     "library restore recreates one note at its original position and size");
@@ -326,9 +328,9 @@ namespace WinStickies
                 {
                     var note = app.Book.Notes[i];
                     app.PrepareTrayMenu();
-                    archiveEntries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "已归档");
+                    archiveEntries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == Strings.Archived);
                     var entry = (ToolStripMenuItem)archiveEntries.DropDownItems[0];
-                    entry.DropDownItems.OfType<ToolStripMenuItem>().Single(item => item.Text == "重新打开").PerformClick();
+                    entry.DropDownItems.OfType<ToolStripMenuItem>().Single(item => item.Text == Strings.Reopen).PerformClick();
                     Application.DoEvents(); // WinForms dispatches OnShown, which reapplies the saved native mode.
                     var window = app.WindowFor(note.Id);
                     Check(!note.Archived && Native.IsWindowVisible(window.Handle) && !Native.IsIconic(window.Handle) &&
@@ -377,6 +379,9 @@ namespace WinStickies
                 RunTitleAndFontTests(folder, runFolder, desktop);
                 RunFormattingTests(folder, runFolder, desktop);
                 RunRuntimeCleanupTests(runFolder);
+                RunLocalizedDeleteTests(folder, runFolder);
+                RunMemoryRegressionTests(runFolder);
+                RunPriorityTests(folder, runFolder);
             }
             catch (Exception ex) { results.Add(ex.ToString()); exitCode = 1; }
             finally
@@ -387,6 +392,250 @@ namespace WinStickies
                 File.WriteAllLines(Path.Combine(folder, "test-results.txt"), results);
             }
             return exitCode;
+        }
+
+        private static void RunPriorityTests(string outputFolder, string runFolder)
+        {
+            string folder = Path.Combine(runFolder, "priorities");
+            var store = new NoteStore(folder);
+            var book = new Notebook();
+            int[] priorities = { 2, 0, 1, 0, 3 };
+            for (int i = 0; i < priorities.Length; i++)
+                book.Notes.Add(new Note { CustomTitle = "Task " + i, Content = "Priority test content " + i,
+                    Priority = priorities[i], X = Ui.S(70 + i * 30), Y = Ui.S(70 + i * 40) });
+            book.Notes.Add(new Note { CustomTitle = "Archive low", Priority = 3, Archived = true });
+            book.Notes.Add(new Note { CustomTitle = "Archive high", Priority = 0, Archived = true });
+            string[] originalIds = book.Notes.Select(n => n.Id).ToArray();
+            Check(new Note().Priority == 2 && !book.SortByPriority, "new notes default to P2 and original order");
+            book.SortByPriority = true; store.Save(book);
+            var restored = store.Load();
+            Check(restored.SortByPriority && restored.Notes.Select(n => n.Priority).SequenceEqual(new[] { 2, 0, 1, 0, 3, 3, 0 }),
+                "all priorities including P0 and sorting preference survive serialization");
+            Check(restored.OrderedNotes.Select(n => n.Id).SequenceEqual(new[] { originalIds[1], originalIds[3], originalIds[6], originalIds[2], originalIds[0], originalIds[4], originalIds[5] }) &&
+                restored.Notes.Select(n => n.Id).SequenceEqual(originalIds), "priority order is stable and does not mutate original order");
+            string serialized = File.ReadAllText(store.FilePath);
+            File.WriteAllText(store.FilePath, System.Text.RegularExpressions.Regex.Replace(
+                System.Text.RegularExpressions.Regex.Replace(serialized, "\"Priority\":\\d+,", ""), "\"SortByPriority\":true,", ""));
+            var legacy = store.Load();
+            Check(legacy.Notes.All(n => n.Priority == 2) && !legacy.SortByPriority && legacy.Notes[0].Content == book.Notes[0].Content,
+                "old notebooks without priority fields load as P2 with content and original order intact");
+            book.Notes[0].Priority = -1; book.Notes[1].Priority = 99; store.Save(book);
+            restored = store.Load();
+            Check(restored.Notes.Take(2).All(n => n.Priority == 2), "invalid saved priorities fall back to P2");
+            book.Notes[0].Priority = 2; book.Notes[1].Priority = 0; store.Save(book);
+
+            var app = new StickyContext(folder, Native.RegisterWindowMessage("WinStickies.PriorityTest." + Guid.NewGuid()));
+            try
+            {
+                app.ShowLibrary(); Application.DoEvents();
+                var cards = app.Library.Controls.OfType<FlowLayoutPanel>().Single();
+                Func<string[]> titles = () => cards.Controls.OfType<NoteCard>().Select(c => c.AccessibleName.Split(',')[0]).ToArray();
+                Check(titles().SequenceEqual(new[] { "Task 1", "Task 3", "Task 2", "Task 0", "Task 4" }),
+                    "overview restores priority sorting and stable ties");
+                Check(cards.Controls.OfType<NoteCard>().All(c => c.Controls.OfType<PriorityButton>().Count() == 1),
+                    "every overview card has an accessible priority button");
+                var search = app.Library.Controls.OfType<TextBox>().Single();
+                search.Text = "Task";
+                Check(titles().SequenceEqual(new[] { "Task 1", "Task 3", "Task 2", "Task 0", "Task 4" }), "search results retain priority order");
+                search.Text = "no match";
+                Check(titles().Length == 0, "priority sorting handles empty search results");
+                search.Text = "";
+                app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == Strings.Archived).PerformClick();
+                Check(titles().SequenceEqual(new[] { "Archive high", "Archive low" }), "archive filter uses priority sorting");
+                int windowsBefore = app.ActiveWindowCount;
+                using (var menu = app.BuildArchivedMenu(originalIds[5]))
+                    menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Priority).DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == "P1").PerformClick();
+                Check(app.Book.Notes[5].Archived && app.Book.Notes[5].Priority == 1 && app.ActiveWindowCount == windowsBefore,
+                    "changing archived priority does not reopen the note");
+                app.Library.Controls.OfType<ActionButton>().Single(b => b.Text == Strings.AllNotes).PerformClick();
+                var window = app.WindowFor(originalIds[0]);
+                var timestamp = window.Note.ModifiedUtc;
+                using (var menu = window.BuildMenu(false))
+                {
+                    var priority = menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Priority);
+                    Check(priority.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Checked).Text == "P2", "priority menu checks the current level");
+                    priority.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == "P0").PerformClick();
+                }
+                Check(window.Note.Priority == 0 && app.IsDirty && window.Note.ModifiedUtc >= timestamp &&
+                    window.Controls.OfType<PriorityButton>().Single().Text == "P0", "priority menu updates the note, badge and autosave state");
+                var deadline = DateTime.UtcNow.AddSeconds(3);
+                while (app.IsDirty && DateTime.UtcNow < deadline) { Application.DoEvents(); System.Threading.Thread.Sleep(10); }
+                Check(!app.IsDirty && store.Load().Notes[0].Priority == 0 && titles().First() == "Task 0",
+                    "autosave persists priority and refreshes overview ordering");
+                app.PrepareTrayMenu();
+                var entries = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes).DropDownItems.OfType<ToolStripMenuItem>().ToArray();
+                Check(entries.Select(i => i.Text.Split(new[] { "  ·" }, StringSplitOptions.None)[0]).SequenceEqual(titles()) && entries.All(i => i.Text.Contains(" · P")),
+                    "tray entries show priorities and match overview ordering");
+                entries[0].DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Priority).DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == "P2").PerformClick();
+                Check(window.Note.Priority == 2 && window.Controls.OfType<PriorityButton>().Single().Text == "P2", "tray priority change updates the open note badge");
+                app.ArchiveNote(originalIds[0]); app.RestoreNote(originalIds[0]);
+                Check(app.Book.Notes[0].Priority == 2, "archive and restore retain priority");
+                using (var menu = app.BuildSortMenu())
+                    menu.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.DefaultOrder).PerformClick();
+                Check(titles().SequenceEqual(new[] { "Task 0", "Task 1", "Task 2", "Task 3", "Task 4" }), "sort menu restores original order");
+                using (var menu = app.BuildSortMenu())
+                    menu.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.PriorityOrder).PerformClick();
+                app.Library.Size = app.Library.MinimumSize; Application.DoEvents();
+                var sort = app.Library.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.SortNotes);
+                Check(sort.Bottom <= cards.Top && app.Library.ClientRectangle.Contains(sort.Bounds), "sort control fits the minimum overview size");
+                using (var bitmap = new Bitmap(app.Library.Width, app.Library.Height))
+                { app.Library.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(outputFolder, "priority-library-preview.png")); }
+                window = app.WindowFor(originalIds[1]);
+                window.SetCollapsed(true);
+                using (var bitmap = new Bitmap(window.Width, window.Height))
+                { window.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(outputFolder, "priority-strip-preview.png")); }
+                foreach (int width in new[] { 180, 200, 259, 260, 310 })
+                {
+                    window.Width = Ui.S(width); Application.DoEvents();
+                    var buttons = window.Controls.OfType<Button>().Where(b => b.Visible).ToArray();
+                    Check(buttons.All(b => window.ClientRectangle.Contains(b.Bounds) && !b.Bounds.IntersectsWith(window.TitleTextBounds)) &&
+                        buttons.SelectMany((a, i) => buttons.Skip(i + 1).Select(b => Rectangle.Intersect(a.Bounds, b.Bounds).IsEmpty)).All(v => v),
+                        "priority badge and title controls fit without overlap at width " + width);
+                }
+                Check(app.SaveNow(), "priority changes and sort preference save successfully");
+            }
+            finally { app.Quit(); app.Dispose(); }
+            using (var restarted = new StickyContext(folder, Native.RegisterWindowMessage("WinStickies.PriorityRestart." + Guid.NewGuid())))
+            {
+                try { Check(restarted.Book.SortByPriority && restarted.Book.Notes.Select(n => n.Priority).SequenceEqual(new[] { 2, 0, 1, 0, 3, 1, 0 }), "application restart restores priorities and sort preference"); }
+                finally { restarted.Quit(); }
+            }
+        }
+
+        private static void RunMemoryRegressionTests(string runFolder)
+        {
+            string[] contents = { "", " \r\n\t\n", "\r\n  标题 🌿  \r\n正文\r\n末尾  ",
+                "first\rsecond\nthird", "\u2003\n\tTitle\t\n\nBody", "single line", null };
+            foreach (string content in contents)
+            {
+                var note = new Note { Content = content };
+                string expected = (content ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim()).FirstOrDefault(s => s.Length > 0);
+                Check(note.Title == (expected ?? Strings.UntitledNote), "title extraction preserves whitespace, newline and Unicode behavior");
+                foreach (string custom in new[] { "", "自己的标题" })
+                {
+                    note.CustomTitle = custom;
+                    string preview = string.Join("\n", (content ?? "").Replace("\r", "").Split('\n')
+                        .SkipWhile(s => string.IsNullOrWhiteSpace(s)).Skip(custom.Length == 0 ? 1 : 0)).Trim();
+                    Check(note.Preview(1024) == preview, "bounded overview preview preserves short text and custom-title behavior");
+                }
+            }
+            var longNote = new Note { Content = "Title\n" + new string('x', 1023) + "🌿" + new string('z', 100000) };
+            Check(longNote.Title == "Title" && longNote.Preview(1024) == new string('x', 1023) &&
+                longNote.Content.EndsWith(new string('z', 100000)), "long previews are bounded without splitting emoji or modifying stored content");
+            longNote.Content = "Changed\nbody";
+            Check(longNote.Title == "Changed" && longNote.Preview(1024) == "body", "title and preview reflect replacement text");
+
+            string folder = Path.Combine(runFolder, "memory-lifecycle");
+            var book = new Notebook();
+            book.Notes.Add(new Note { Content = "菜单生命周期\n正文", Archived = true });
+            new NoteStore(folder).Save(book);
+            var app = new StickyContext(folder, Native.RegisterWindowMessage("WinStickies.Test." + Guid.NewGuid().ToString("N")));
+            try
+            {
+                var archives = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Archived);
+                Check(archives.DropDownItems.Count == 0 && app.ActiveWindowCount == 0,
+                    "archived notebook startup retains neither per-note menus nor windows");
+                // This test explicitly closes each menu to verify event ordering.
+                // Desktop focus changes must not dismiss it between Show and inspection.
+                app.TrayMenu.AutoClose = false;
+                app.ShowTrayMenu(); Application.DoEvents();
+                archives = app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Archived);
+                var entry = (ToolStripMenuItem)archives.DropDownItems[0];
+                var reopen = entry.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.Reopen);
+                // Closed precedes Click in the native menu event sequence.
+                app.TrayMenu.Close(); reopen.PerformClick(); Application.DoEvents();
+                Check(!app.Book.Notes[0].Archived && app.ActiveWindowCount == 1 && entry.IsDisposed && reopen.IsDisposed,
+                    "tray close defers disposal until the selected restore action has run");
+                Check(!app.TrayMenu.Items.OfType<ToolStripMenuItem>().Any(i => i.HasDropDownItems),
+                    "closed tray menu releases all per-note entries");
+                app.ShowTrayMenu(); Application.DoEvents();
+                Check(app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes).DropDownItems.Count == 1,
+                    "reopening the tray rebuilds entries from the latest note state");
+                app.TrayMenu.Close(); app.ShowTrayMenu(); Application.DoEvents();
+                Check(app.TrayMenu.Visible && app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes).DropDownItems.Count == 1,
+                    "a queued close does not clear a newly reopened menu");
+                app.TrayMenu.Close(); Application.DoEvents();
+                app.ShowLibrary(); var library = app.Library; var icon = library.Icon;
+                Check(object.ReferenceEquals(icon, app.WindowFor(app.Book.Notes[0].Id).Icon), "note and overview windows share the application icon");
+                library.Close(); app.ArchiveNote(app.Book.Notes[0].Id); app.RestoreNote(app.Book.Notes[0].Id);
+                using (var bitmap = app.WindowFor(app.Book.Notes[0].Id).Icon.ToBitmap())
+                    Check(bitmap.Width > 0 && object.ReferenceEquals(icon, app.WindowFor(app.Book.Notes[0].Id).Icon),
+                        "closing overview and note windows leaves the shared icon usable on restore");
+                app.ShowTrayMenu(); // Also exercise shutdown with a visible menu.
+            }
+            finally { app.Quit(); app.Dispose(); }
+        }
+
+        private static void CheckLanguage()
+        {
+            Check(System.Threading.Thread.CurrentThread.CurrentUICulture.Name == Strings.LanguageCode,
+                "managed UI culture matches the compiled edition");
+            Check(new Note().Title == (Strings.IsEnglish ? "Untitled note" : "未命名便签"),
+                "blank notes use the edition's localized fallback title");
+            Check(new Note { Content = "用户正文 / User text", CustomTitle = "自定义 / Custom" }.Title == "自定义 / Custom",
+                "UI language never translates a user's note title");
+            var texts = typeof(Strings).GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                .Where(f => f.FieldType == typeof(string)).Select(f => (string)f.GetValue(null)).ToArray();
+            Check(texts.Length > 100 && texts.All(s => !string.IsNullOrEmpty(s)), "all UI translations are present");
+            if (Strings.IsEnglish)
+                Check(texts.All(s => !s.Any(c => c >= '\u4e00' && c <= '\u9fff')), "English UI catalog contains no untranslated Chinese text");
+            Check(Ui.Font(9).FontFamily.Name == Strings.FontFamily, "edition selects an available UI font");
+            Check(Enum.GetValues(typeof(NoteMode)).Cast<NoteMode>().All(mode =>
+                TextRenderer.MeasureText(Ui.ModeName(mode), Ui.Font(7.75f), Size.Empty, TextFormatFlags.NoPadding).Width <= Ui.S(96)),
+                "translated mode names fit the note footer");
+        }
+
+        private static void RunLocalizedDeleteTests(string outputFolder, string runFolder)
+        {
+            string dataFolder = Path.Combine(runFolder, "localized-delete");
+            var app = new StickyContext(dataFolder, Native.RegisterWindowMessage("WinStickies.TestDelete." + Guid.NewGuid()));
+            try
+            {
+                app.NewNote(); var note = app.Book.Notes.Single();
+                app.WindowFor(note.Id).Editor.Text = "保留原文 / Preserve original text 🌿";
+                app.ArchiveNote(note.Id);
+                foreach (bool delete in new[] { false, true })
+                {
+                    bool observed = false; Exception failure = null;
+                    using (var timer = new Timer { Interval = 30 })
+                    using (var menu = app.BuildArchivedMenu(note.Id))
+                    {
+                        timer.Tick += delegate
+                        {
+                            var dialog = Application.OpenForms.OfType<CloseNoteDialog>().SingleOrDefault();
+                            if (dialog == null) return;
+                            timer.Stop(); observed = true;
+                            try
+                            {
+                                var buttons = dialog.Controls.OfType<Button>().Where(b => b.Visible).ToArray();
+                                Check(dialog.Text == Strings.DeleteNoteTitle && buttons.Length == 2 &&
+                                    buttons.Any(b => b.Text == Strings.Delete) && buttons.Any(b => b.Text == Strings.Cancel),
+                                    "delete confirmation uses translated buttons independent of Windows language");
+                                Check(((Button)dialog.AcceptButton).Text == Strings.Cancel && ((Button)dialog.CancelButton).Text == Strings.Cancel,
+                                    "localized delete confirmation keeps Cancel as the safe keyboard default");
+                                var description = dialog.Controls.OfType<Label>().Single(l => l.Text == Strings.DeleteDescription);
+                                Size measured = TextRenderer.MeasureText(description.Text, description.Font,
+                                    new Size(description.Width, int.MaxValue), TextFormatFlags.WordBreak);
+                                Check(measured.Height <= description.Height, "translated delete description fits its dialog");
+                                if (!delete)
+                                    using (var bitmap = new Bitmap(dialog.Width, dialog.Height))
+                                    { dialog.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(outputFolder, "delete-dialog-preview.png")); }
+                                buttons.Single(b => b.Text == (delete ? Strings.Delete : Strings.Cancel)).PerformClick();
+                            }
+                            catch (Exception ex) { failure = ex; dialog.Close(); }
+                        };
+                        timer.Start();
+                        menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.DeleteThisNote).PerformClick();
+                        timer.Stop();
+                    }
+                    if (failure != null) throw failure;
+                    Check(observed && app.Book.Notes.Count == (delete ? 0 : 1),
+                        "translated delete choice preserves or removes the archived note as requested");
+                }
+                Check(new NoteStore(dataFolder).Load().Notes.Count == 0, "localized deletion is saved to disk");
+            }
+            finally { app.Quit(); }
         }
 
         // Exercise the real form mouse handlers without moving the user's mouse pointer.
@@ -431,6 +680,13 @@ namespace WinStickies
                 using (var graphics = Graphics.FromImage(bitmap))
                 { graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size); bitmap.Save(path); }
             }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                // A locked or noninteractive desktop has no usable screen DC.
+                // Keep testing the editor; explicitly report the missing visual evidence.
+                if (ex.NativeErrorCode != 6) throw;
+                results.Add("SKIP: live note screenshot unavailable on this desktop: " + Path.GetFileName(path));
+            }
             finally { window.TopMost = topmost; }
         }
         private static void ChooseNoteClose(NoteForm window, string action, string previewPath = null)
@@ -446,8 +702,8 @@ namespace WinStickies
                     try
                     {
                         var buttons = dialog.Controls.OfType<Button>().ToArray();
-                        Check(dialog.Modal && buttons.Select(b => b.Text).OrderBy(t => t).SequenceEqual(new[] { "删除", "归档", "取消" }.OrderBy(t => t)) &&
-                            ((Button)dialog.AcceptButton).Text == "取消" && ((Button)dialog.CancelButton).Text == "取消" && !window.IsDisposed,
+                        Check(dialog.Modal && buttons.Select(b => b.Text).OrderBy(t => t).SequenceEqual(new[] { Strings.Delete, Strings.Archive, Strings.Cancel }.OrderBy(t => t)) &&
+                            ((Button)dialog.AcceptButton).Text == Strings.Cancel && ((Button)dialog.CancelButton).Text == Strings.Cancel && !window.IsDisposed,
                             "title-bar X opens a three-choice modal with cancel as the default: " + action + ", " + window.Note.Mode);
                         if (window.Note.Mode == NoteMode.Topmost)
                             Check((Native.GetStyle(dialog.Handle, Native.GWL_EXSTYLE) & Native.WS_EX_TOPMOST) != 0, "close dialog remains above its topmost note");
@@ -466,7 +722,7 @@ namespace WinStickies
                     catch (Exception ex) { failure = ex; dialog.Close(); }
                 };
                 timer.Start();
-                window.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == "关闭便签").PerformClick();
+                window.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.CloseNote).PerformClick();
                 timer.Stop();
             }
             if (failure != null) throw failure;
@@ -598,10 +854,10 @@ namespace WinStickies
                     window.Editor.Select(1, 3); string selected = window.Editor.SelectedText;
                     using (var menu = window.BuildMenu(false, false))
                     {
-                        var sizes = menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "正文字号");
-                        Check(sizes.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Checked).Text.Contains("默认"),
+                        var sizes = menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.FontSize);
+                        Check(sizes.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Checked).Text.Contains(Strings.DefaultFontSuffix),
                             "new notes mark the original body size as the default: " + mode);
-                        sizes.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == (18 + mode * 2) + " 磅" || mode == 2 && i.Text == "24 磅").PerformClick();
+                        sizes.DropDownItems.OfType<ToolStripMenuItem>().Single(i => i.Text == (18 + mode * 2) + Strings.PointSuffix || mode == 2 && i.Text == "24" + Strings.PointSuffix).PerformClick();
                     }
                     float expectedSize = mode == 2 ? 24 : 18 + mode * 2;
                     Application.DoEvents();
@@ -609,8 +865,8 @@ namespace WinStickies
                         window.Editor.SelectedText == selected && note.Content == body && Native.Bounds(window.Handle) == bounds,
                         "font menu changes this note's body size while preserving text, selection and geometry: " + mode);
                     using (var menu = window.BuildMenu(false, false))
-                        Check(menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "正文字号").DropDownItems.OfType<ToolStripMenuItem>()
-                            .Single(i => i.Checked).Text == expectedSize + " 磅", "font menu reflects the saved choice: " + mode);
+                        Check(menu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.FontSize).DropDownItems.OfType<ToolStripMenuItem>()
+                            .Single(i => i.Checked).Text == expectedSize + Strings.PointSuffix, "font menu reflects the saved choice: " + mode);
                     window.SetCollapsed(true); bounds = Native.Bounds(window.Handle);
                     NoteMouse(window, "OnMouseDown", window.PointToScreen(new Point(Ui.S(50), window.Height / 2)), 2);
                     Check(window.TitleEditor.Visible && !window.Editor.Visible && note.Collapsed && Native.Bounds(window.Handle) == bounds,
@@ -622,7 +878,7 @@ namespace WinStickies
                         "archive and restore preserve custom title, font size, body, geometry and mode: " + mode);
                 }
                 app.PrepareTrayMenu();
-                Check(app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == "我的便签").DropDownItems
+                Check(app.TrayMenu.Items.OfType<ToolStripMenuItem>().Single(i => i.Text == Strings.MyNotes).DropDownItems
                     .OfType<ToolStripMenuItem>().All(i => i.Text.StartsWith("独立标题") && i.Text.Contains("&&")),
                     "tray uses custom titles and escapes ampersands");
                 app.ShowLibrary(); var search = app.Library.Controls.OfType<TextBox>().Single();
@@ -650,8 +906,8 @@ namespace WinStickies
                 target.SetCollapsed(true);
                 DragNote(target, new Point(target.Width - 1, target.Height - 1), new Point(-Ui.S(1000), -Ui.S(1000)));
                 NoteKey(target, Keys.F2);
-                Check(target.TitleEditor.Bounds.Left >= target.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == "展开便签").Right &&
-                    target.TitleEditor.Right < target.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == "显示模式").Left &&
+                Check(target.TitleEditor.Bounds.Left >= target.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.ExpandNote).Right &&
+                    target.TitleEditor.Right < target.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.DisplayMode).Left &&
                     target.TitleEditor.Top >= 0 && target.TitleEditor.Bottom <= target.Height,
                     "inline title stays between buttons inside the smallest collapsed strip");
                 using (var bitmap = new Bitmap(target.Width, target.Height))
@@ -715,7 +971,7 @@ namespace WinStickies
                     window.SetCollapsed(true);
                     DragNote(window, new Point(window.Width - 1, window.Height - 1), new Point(-Ui.S(1000), -Ui.S(1000)));
                     Check(window.TitleBlankBounds.Width >= Ui.S(18) && window.TitleTextBounds.Width > 0 &&
-                        window.TitleBlankBounds.Right < window.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == "显示模式").Left,
+                        window.TitleBlankBounds.Right < window.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.DisplayMode).Left,
                         "smallest strip reserves room for title, blank collapse area and buttons: " + mode);
                     DoubleClickNote(window, window.TitleBlankBounds);
 
@@ -894,8 +1150,8 @@ namespace WinStickies
                         Check(window.Width == (collapsed ? NoteForm.MinCollapsedWidth : NoteForm.MinNoteWidth) &&
                             window.Height == (collapsed ? NoteForm.MinCollapsedHeight : NoteForm.MinNoteHeight),
                             "resize stops at usable minimum dimensions: mode=" + mode + ", collapsed=" + collapsed);
-                        var controls = window.Controls.OfType<ActionButton>().ToArray();
-                        Check(controls.Length == 4 && controls.All(b => window.ClientRectangle.Contains(b.Bounds)) &&
+                        var controls = window.Controls.OfType<Button>().Where(b => b.Visible).ToArray();
+                        Check(controls.Length == 4 && controls.OfType<PriorityButton>().Count() == 1 && controls.All(b => window.ClientRectangle.Contains(b.Bounds)) &&
                             controls.SelectMany((a, i) => controls.Skip(i + 1).Select(b => Rectangle.Intersect(a.Bounds, b.Bounds).IsEmpty)).All(b => b),
                             "title controls remain inside the smallest note without overlapping: mode=" + mode + ", collapsed=" + collapsed);
                         if (mode == 0)
@@ -915,7 +1171,7 @@ namespace WinStickies
                     Check(note.Collapsed && window.TitleEditor.Visible && Native.Bounds(window.Handle) == moved,
                         "double-clicking a resized strip edits the title without changing geometry: " + mode);
                     NoteKey(window, Keys.Escape);
-                    window.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == "展开便签").PerformClick();
+                    window.Controls.OfType<ActionButton>().Single(b => b.AccessibleName == Strings.ExpandNote).PerformClick();
                     Check(!note.Collapsed && window.Editor.Visible && Native.Bounds(window.Handle).Size == initial.Size &&
                         Native.Bounds(window.Handle).Location == moved.Location, "fold button restores expanded size at its moved position: " + mode);
                     DragNote(window, new Point(window.Width - 1, window.Height - 1), new Point(Ui.S(31), Ui.S(27)));
@@ -955,7 +1211,7 @@ namespace WinStickies
                 {
                     var window = app.WindowFor(note.Id); window.SetCollapsed(false);
                     var expandedBounds = Native.Bounds(window.Handle); string content = note.Content;
-                    ChooseNoteClose(window, "取消", note.Mode == NoteMode.Floating ? Path.Combine(outputFolder, "close-dialog-preview.png") : null);
+                    ChooseNoteClose(window, Strings.Cancel, note.Mode == NoteMode.Floating ? Path.Combine(outputFolder, "close-dialog-preview.png") : null);
                     ChooseNoteClose(window, "窗口关闭");
                     Check(!window.IsDisposed && !note.Archived && !note.Collapsed && window.Enabled &&
                         Native.Bounds(window.Handle) == expandedBounds && note.Content == content,
@@ -965,7 +1221,7 @@ namespace WinStickies
                     Check(!window.IsDisposed && !note.Archived && note.Collapsed && window.Enabled &&
                         Native.Bounds(window.Handle) == strips[note.Id] && note.Content == content,
                         "Escape and default Enter cancel without changing the collapsed note: " + note.Mode);
-                    ChooseNoteClose(window, "归档");
+                    ChooseNoteClose(window, Strings.Archive);
                     Check(window.IsDisposed && note.Archived && note.Content == content &&
                         new NoteStore(dataFolder).Load().Notes.Single(n => n.Id == note.Id).Archived,
                         "archive choice hides the note and persists its content and archive state: " + note.Mode);
@@ -977,9 +1233,9 @@ namespace WinStickies
                 var first = app.Book.Notes[0]; var firstWindow = app.WindowFor(first.Id);
                 using (var locked = new FileStream(Path.Combine(dataFolder, "notes.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
-                    ChooseNoteClose(firstWindow, "删除");
+                    ChooseNoteClose(firstWindow, Strings.Delete);
                     Check(app.Book.Notes[0] == first && !firstWindow.IsDisposed && app.IsDirty, "failed confirmed deletion keeps the window, content and original list position");
-                    ChooseNoteClose(firstWindow, "归档");
+                    ChooseNoteClose(firstWindow, Strings.Archive);
                     Check(!first.Archived && !firstWindow.IsDisposed && firstWindow.Enabled && app.IsDirty,
                         "failed archive from close dialog retains the active note");
                 }
@@ -989,7 +1245,7 @@ namespace WinStickies
                 {
                     var window = app.WindowFor(note.Id); if (removed == 0) window.SetCollapsed(false);
                     IntPtr handle = window.Handle;
-                    ChooseNoteClose(window, "删除");
+                    ChooseNoteClose(window, Strings.Delete);
                     app.RepairShell(); Application.DoEvents(); removed++;
                     Check(window.IsDisposed && !Native.IsWindow(handle) && !app.Book.Notes.Any(n => n.Id == note.Id) &&
                         !new NoteStore(dataFolder).Load().Notes.Any(n => n.Id == note.Id) && app.ActiveWindowCount == modeCount - removed &&

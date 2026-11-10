@@ -13,6 +13,7 @@ namespace WinStickies
         [STAThread]
         private static int Main(string[] args)
         {
+            Strings.Initialize();
             Native.MatchShellDpi();
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Ui.Initialize();
             string folder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
@@ -35,7 +36,7 @@ namespace WinStickies
                 catch (Exception ex)
                 {
                     try { Directory.CreateDirectory(folder); File.WriteAllText(Path.Combine(folder, "error.log"), ex.ToString()); } catch { }
-                    MessageBox.Show("WinStickies 无法启动。\n\n" + ex.Message + "\n\n数据位置：" + folder, "WinStickies", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(Strings.StartupFailed + ex.Message + Strings.DataLocation + folder, "WinStickies", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return 1;
                 }
                 finally { mutex.ReleaseMutex(); }

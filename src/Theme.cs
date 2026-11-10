@@ -14,22 +14,28 @@ namespace WinStickies
             Line = Color.FromArgb(226, 228, 219), Accent = Color.FromArgb(71, 94, 67);
         internal static readonly Color[] Papers = { Color.FromArgb(255, 240, 177), Color.FromArgb(222, 237, 210),
             Color.FromArgb(218, 234, 244), Color.FromArgb(242, 218, 222), Color.FromArgb(231, 223, 243), Color.FromArgb(239, 235, 225) };
-        internal static readonly string[] ColorNames = { "奶油黄", "鼠尾草绿", "雾蓝", "浅桃粉", "丁香紫", "暖灰" };
-        private static readonly Dictionary<string, Font> Fonts = new Dictionary<string, Font>();
+        internal static readonly string[] ColorNames = { Strings.CreamYellow, Strings.SageGreen, Strings.MistyBlue, Strings.SoftPink, Strings.Lilac, Strings.WarmGray };
+        private static readonly Dictionary<float, Font> Fonts = new Dictionary<float, Font>();
+        private static readonly Dictionary<float, Font> BoldFonts = new Dictionary<float, Font>();
+        private static Icon appIcon;
+        // All forms and the tray borrow these process-lifetime resources.
+        internal static Icon AppIcon { get { return appIcon ?? (appIcon = CreateIcon()); } }
         internal static void Initialize() { using (var g = Graphics.FromHwnd(IntPtr.Zero)) Scale = g.DpiX / 96f; }
         internal static int S(float value) { return (int)Math.Round(value * Scale); }
         internal static Font Font(float size, bool bold = false)
         {
-            string key = size + ":" + bold;
-            if (!Fonts.ContainsKey(key)) Fonts[key] = new Font("Microsoft YaHei UI", size, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Point);
-            return Fonts[key];
+            var fonts = bold ? BoldFonts : Fonts;
+            Font font;
+            if (!fonts.TryGetValue(size, out font))
+                fonts[size] = font = new Font(Strings.FontFamily, size, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Point);
+            return font;
         }
         internal static Color Darken(Color c, int amount) { return Color.FromArgb(Math.Max(0, c.R - amount), Math.Max(0, c.G - amount), Math.Max(0, c.B - amount)); }
-        internal static string ModeName(NoteMode mode) { return mode == NoteMode.Topmost ? "始终置顶" : mode == NoteMode.Desktop ? "桌面附着" : "普通悬浮"; }
+        internal static string ModeName(NoteMode mode) { return mode == NoteMode.Topmost ? Strings.Topmost : mode == NoteMode.Desktop ? Strings.Desktop : Strings.Floating; }
         internal static string ModeIcon(NoteMode mode) { return mode == NoteMode.Topmost ? "pin" : mode == NoteMode.Desktop ? "desktop" : "float"; }
         internal static string ModeDescription(NoteMode mode)
         {
-            return mode == NoteMode.Topmost ? "一直显示在其他应用窗口上方" : mode == NoteMode.Desktop ? "留在桌面层，其他应用可以覆盖" : "自由移动，会被其他应用窗口遮挡";
+            return mode == NoteMode.Topmost ? Strings.TopmostDescription : mode == NoteMode.Desktop ? Strings.DesktopDescription : Strings.FloatingDescription;
         }
         internal static GraphicsPath Round(Rectangle rect, int radius)
         {
@@ -70,7 +76,7 @@ namespace WinStickies
             }
             g.Restore(saved);
         }
-        internal static Icon CreateIcon()
+        private static Icon CreateIcon()
         {
             using (var bitmap = new Bitmap(32, 32))
             using (var g = Graphics.FromImage(bitmap))
@@ -120,7 +126,7 @@ namespace WinStickies
             int all = string.IsNullOrEmpty(Glyph) ? textWidth : string.IsNullOrEmpty(Text) ? icon : textWidth + icon + gap;
             int x = AlignLeft ? Ui.S(12) : Math.Max(Ui.S(4), (Width - all) / 2);
             if (!string.IsNullOrEmpty(Glyph)) { Ui.Icon(e.Graphics, Glyph, ink, new Rectangle(x, (Height - icon) / 2, icon, icon)); x += icon + gap; }
-            if (!string.IsNullOrEmpty(Text)) Ui.Text(e.Graphics, Text, Font, ink, new Rectangle(x, 0, Width - x - Ui.S(5), Height), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+            if (!string.IsNullOrEmpty(Text)) Ui.Text(e.Graphics, Text, Font, ink, new Rectangle(x, 0, Math.Max(1, Width - x - Ui.S(string.IsNullOrEmpty(TrailingText) ? 5 : 36)), Height), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
             if (!string.IsNullOrEmpty(TrailingText)) Ui.Text(e.Graphics, TrailingText, Ui.Font(9), Ui.Muted, new Rectangle(Width - Ui.S(36), 0, Ui.S(24), Height), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
             if (Focused && ShowFocusCues) { using (var p = new Pen(Ui.Accent, Ui.S(1))) using (var path = Ui.Round(new Rectangle(2, 2, Width - 5, Height - 5), Ui.S(6))) e.Graphics.DrawPath(p, path); }
         }

@@ -32,9 +32,19 @@ namespace WinStickies
         {
             store = new NoteStore(folder); Book = store.Load();
             int removedSamples = store.MigrateTrayStartup(Book);
-            tray = new NotifyIcon { Icon = Ui.CreateIcon(), Text = "WinStickies · 桌面便签", Visible = true };
+            tray = new NotifyIcon { Icon = Ui.AppIcon, Text = Strings.TrayTitle, Visible = true };
             trayMenu = new ContextMenuStrip { Font = Ui.Font(9.5f), ShowImageMargin = false };
             trayMenu.Opening += delegate { PrepareTrayMenu(); };
+            trayMenu.Closed += delegate
+            {
+                if (exiting || trayMenu.IsDisposed || !trayMenu.IsHandleCreated) return;
+                // A menu click is dispatched after Closed. Release note-specific items
+                // on the next UI turn, after the clicked action has finished.
+                trayMenu.BeginInvoke((Action)delegate
+                {
+                    if (!exiting && !trayMenu.IsDisposed && !trayMenu.Visible) PrepareTrayMenu(false);
+                });
+            };
             tray.ContextMenuStrip = trayMenu;
             trayClickTimer.Tick += delegate { trayClickTimer.Stop(); ShowTrayMenu(); };
             tray.MouseClick += delegate(object sender, MouseEventArgs e)
@@ -55,19 +65,21 @@ namespace WinStickies
                 if (windows.Values.Any(w => !w.IsDisposed && w.IsInteracting)) return;
                 saveTimer.Stop(); SaveNow(); if (library != null && library.Visible) library.RefreshNotes();
             };
-            shellTimer.Tick += delegate { RepairShell(); }; UpdatePresence(); PrepareTrayMenu();
+            shellTimer.Tick += delegate { RepairShell(); }; UpdatePresence(); PrepareTrayMenu(false);
             cleanupTimer.Tick += delegate { if (!dirty && !windows.Values.Any(w => !w.IsDisposed && w.IsInteracting)) store.CleanupRuntimeFiles(); };
             cleanupTimer.Start();
             if (!string.IsNullOrEmpty(store.LoadWarning)) Report(store.LoadWarning);
             if (store.IsNew) { dirty = true; SaveNow(); }
             if (string.IsNullOrEmpty(LastError))
-                ShowStartupNotice(false, removedSamples > 0 ? "\n" + removedSamples + " 张未改动的示例已备份到 data 文件夹并清理。" : "");
+                ShowStartupNotice(false, removedSamples > 0 ? "\n" + removedSamples + Strings.SamplesCleanedSuffix : "");
         }
 
         private void UpdatePresence()
         {
             int active = Book.Notes.Count(n => !n.Archived);
-            tray.Text = "WinStickies · " + active + " 张便签 · " + (Book.Notes.Count - active) + " 张已归档\n双击新建，右键管理";
+            string tooltip = "WinStickies · " + active + Strings.NoteCountSeparator + (Book.Notes.Count - active) + Strings.TrayArchivedSuffix;
+            // .NET Framework NotifyIcon limits tooltip text to 63 characters.
+            tray.Text = tooltip.Length <= 63 ? tooltip : tooltip.Substring(0, 62) + "…";
             shellTimer.Enabled = active > 0;
         }
         private void Notify(string message, string title = "WinStickies", ToolTipIcon icon = ToolTipIcon.None)
@@ -79,25 +91,26 @@ namespace WinStickies
             if (exiting) return;
             // Keep recovery/save problems visible instead of replacing them with success.
             if (!string.IsNullOrEmpty(LastError)) { Notify(LastError); return; }
-            Notify("已在系统托盘运行。双击托盘图标新建便签，右键图标管理便签。" + extra,
-                alreadyRunning ? "WinStickies 已在运行" : "WinStickies 启动成功", ToolTipIcon.Info);
+            Notify(Strings.StartupBody + extra,
+                alreadyRunning ? Strings.AlreadyRunning : Strings.StartupSuccess, ToolTipIcon.Info);
         }
-        internal void PrepareTrayMenu()
+        internal void PrepareTrayMenu(bool includeNotes = true)
         {
             foreach (ToolStripItem item in trayMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
             trayMenu.Items.Clear();
             int active = Book.Notes.Count(n => !n.Archived);
             int archivedCount = Book.Notes.Count - active;
-            trayMenu.Items.Add(new ToolStripMenuItem("WinStickies · " + active + " 张便签 · " + archivedCount + " 张已归档") { Enabled = false });
-            trayMenu.Items.Add("新建便签", null, delegate { NewNote(); });
-            var notes = new ToolStripMenuItem("我的便签") { Enabled = active > 0 };
-            foreach (var note in Book.Notes.Where(n => !n.Archived))
+            trayMenu.Items.Add(new ToolStripMenuItem("WinStickies · " + active + Strings.NoteCountSeparator + archivedCount + Strings.ArchivedCountSuffix) { Enabled = false });
+            trayMenu.Items.Add(Strings.NewNote, null, delegate { NewNote(); });
+            var notes = new ToolStripMenuItem(Strings.MyNotes) { Enabled = active > 0 };
+            if (includeNotes) foreach (var note in Book.OrderedNotes.Where(n => !n.Archived))
             {
                 string id = note.Id;
                 string title = note.Title.Length > 26 ? note.Title.Substring(0, 26) + "…" : note.Title;
-                var entry = new ToolStripMenuItem(title.Replace("&", "&&") + (note.Collapsed ? "  · 已收起" : ""));
-                entry.DropDownItems.Add("查看便签", null, delegate { WindowFor(id).Reveal(); });
-                entry.DropDownItems.Add(note.Collapsed ? "展开便签" : "收起便签", null,
+                var entry = new ToolStripMenuItem(title.Replace("&", "&&") + "  · P" + note.Priority + (note.Collapsed ? Strings.CollapsedSuffix : ""));
+                entry.DropDownItems.Add(PriorityMenu.Create(note, value => SetNotePriority(id, value)));
+                entry.DropDownItems.Add(Strings.ViewNote, null, delegate { WindowFor(id).Reveal(); });
+                entry.DropDownItems.Add(note.Collapsed ? Strings.ExpandNote : Strings.CollapseNote, null,
                     delegate { var form = WindowFor(id); form.SetCollapsed(!form.Note.Collapsed); });
                 entry.DropDownItems.Add(new ToolStripSeparator());
                 foreach (NoteMode value in Enum.GetValues(typeof(NoteMode)))
@@ -107,29 +120,32 @@ namespace WinStickies
                     option.Click += delegate { WindowFor(id).ChangeMode(mode); }; entry.DropDownItems.Add(option);
                 }
                 entry.DropDownItems.Add(new ToolStripSeparator());
-                entry.DropDownItems.Add("归档便签", null, delegate { ArchiveNote(id); });
-                entry.DropDownItems.Add("删除便签…", null, delegate { DeleteNote(id); });
+                entry.DropDownItems.Add(Strings.ArchiveNote, null, delegate { ArchiveNote(id); });
+                entry.DropDownItems.Add(Strings.DeleteNoteMenu, null, delegate { DeleteNote(id); });
                 notes.DropDownItems.Add(entry);
             }
             trayMenu.Items.Add(notes);
-            var archived = new ToolStripMenuItem("已归档") { Enabled = archivedCount > 0 };
-            foreach (var note in Book.Notes.Where(n => n.Archived))
+            var archived = new ToolStripMenuItem(Strings.Archived) { Enabled = archivedCount > 0 };
+            if (includeNotes) foreach (var note in Book.OrderedNotes.Where(n => n.Archived))
             {
                 string id = note.Id;
                 string title = note.Title.Length > 26 ? note.Title.Substring(0, 26) + "…" : note.Title;
-                var entry = new ToolStripMenuItem(title.Replace("&", "&&"));
-                entry.DropDownItems.Add("重新打开", null, delegate { RestoreNote(id); });
+                var entry = new ToolStripMenuItem(title.Replace("&", "&&") + "  · P" + note.Priority);
+                entry.DropDownItems.Add(PriorityMenu.Create(note, value => SetNotePriority(id, value)));
+                entry.DropDownItems.Add(Strings.Reopen, null, delegate { RestoreNote(id); });
                 entry.DropDownItems.Add(new ToolStripSeparator());
-                entry.DropDownItems.Add("删除便签…", null, delegate { DeleteNote(id); });
+                entry.DropDownItems.Add(Strings.DeleteNoteMenu, null, delegate { DeleteNote(id); });
                 archived.DropDownItems.Add(entry);
             }
             trayMenu.Items.Add(archived);
+            // Do not retain note/sort submenus while the tray is closed.
+            if (includeNotes) trayMenu.Items.Add(BuildSortMenu());
             trayMenu.Items.Add(new ToolStripSeparator());
-            trayMenu.Items.Add(new ToolStripMenuItem("全部收起（保留标题栏）", null, delegate { SetAllCollapsed(true); }) { Enabled = active > 0 });
-            trayMenu.Items.Add(new ToolStripMenuItem("全部展开", null, delegate { SetAllCollapsed(false); }) { Enabled = active > 0 });
+            trayMenu.Items.Add(new ToolStripMenuItem(Strings.CollapseAllTray, null, delegate { SetAllCollapsed(true); }) { Enabled = active > 0 });
+            trayMenu.Items.Add(new ToolStripMenuItem(Strings.ExpandAll, null, delegate { SetAllCollapsed(false); }) { Enabled = active > 0 });
             trayMenu.Items.Add(new ToolStripSeparator());
-            trayMenu.Items.Add("便签总览…", null, delegate { ShowLibrary(); });
-            trayMenu.Items.Add("退出 WinStickies", null, delegate { Quit(); });
+            trayMenu.Items.Add(Strings.OverviewMenu, null, delegate { ShowLibrary(); });
+            trayMenu.Items.Add(Strings.Exit, null, delegate { Quit(); });
         }
         internal void ShowTrayMenu()
         {
@@ -140,7 +156,7 @@ namespace WinStickies
 
         private NoteForm CreateWindow(Note note)
         {
-            if (note.Archived) throw new InvalidOperationException("请先重新打开已归档的便签。");
+            if (note.Archived) throw new InvalidOperationException(Strings.ReopenFirst);
             var form = new NoteForm(note);
             form.Changed += delegate { ScheduleSave(); };
             form.NewRequested += delegate { NewNote(); };
@@ -155,7 +171,7 @@ namespace WinStickies
         internal NoteForm WindowFor(string id)
         {
             var note = Book.Notes.First(n => n.Id == id);
-            if (note.Archived) throw new InvalidOperationException("请先重新打开已归档的便签。");
+            if (note.Archived) throw new InvalidOperationException(Strings.ReopenFirst);
             NoteForm form;
             if (windows.TryGetValue(id, out form) && !form.IsDisposed && form.IsHandleCreated) return form;
             return CreateWindow(note);
@@ -177,6 +193,29 @@ namespace WinStickies
             foreach (var note in Book.Notes.Where(n => !n.Archived).ToArray()) WindowFor(note.Id).SetCollapsed(collapsed);
             SaveNow(); if (library != null) library.RefreshNotes();
         }
+        internal void SetNotePriority(string id, int value)
+        {
+            var note = Book.Notes.FirstOrDefault(n => n.Id == id);
+            if (note == null) return;
+            value = Note.NormalizePriority(value);
+            if (note.Priority == value) return;
+            NoteForm form;
+            if (windows.TryGetValue(id, out form) && !form.IsDisposed) form.SetPriority(value);
+            else { note.Priority = value; note.ModifiedUtc = DateTime.UtcNow; ScheduleSave(); }
+        }
+        internal void SetPrioritySort(bool enabled)
+        {
+            if (Book.SortByPriority == enabled) return;
+            Book.SortByPriority = enabled; ScheduleSave();
+            if (library != null) library.RefreshNotes();
+        }
+        internal ToolStripMenuItem BuildSortMenu()
+        {
+            var menu = new ToolStripMenuItem(Strings.SortNotes);
+            menu.DropDownItems.Add(new ToolStripMenuItem(Strings.DefaultOrder, null, delegate { SetPrioritySort(false); }) { Checked = !Book.SortByPriority });
+            menu.DropDownItems.Add(new ToolStripMenuItem(Strings.PriorityOrder, null, delegate { SetPrioritySort(true); }) { Checked = Book.SortByPriority });
+            return menu;
+        }
         internal void ArchiveNote(string id)
         {
             var note = Book.Notes.FirstOrDefault(n => n.Id == id);
@@ -188,7 +227,7 @@ namespace WinStickies
             if (!SaveNow())
             {
                 note.Archived = false;
-                Report("归档未完成：保存失败，便签仍保留在桌面。请检查磁盘空间和文件夹权限。");
+                Report(Strings.ArchiveFailed);
                 return;
             }
             CloseNoteWindow(id);
@@ -202,11 +241,11 @@ namespace WinStickies
             if (!SaveNow())
             {
                 note.Archived = true;
-                Report("重新打开未完成：保存失败，便签仍保留在已归档中。请检查磁盘空间和文件夹权限。");
+                Report(Strings.RestoreFailed);
                 return;
             }
             var form = CreateWindow(note);
-            if (note.Mode == NoteMode.Desktop) Notify("便签已恢复到桌面层，按 Win+D 查看桌面。");
+            if (note.Mode == NoteMode.Desktop) Notify(Strings.RestoredToDesktop);
             else { Native.SetForegroundWindow(form.Handle); if (!note.Collapsed) form.Editor.Focus(); }
             UpdatePresence(); if (library != null) library.RefreshNotes();
         }
@@ -220,9 +259,11 @@ namespace WinStickies
         internal ContextMenuStrip BuildArchivedMenu(string id)
         {
             var menu = new ContextMenuStrip { Font = Ui.Font(9.5f), ShowImageMargin = false };
-            menu.Items.Add("重新打开", null, delegate { RestoreNote(id); });
+            var note = Book.Notes.First(n => n.Id == id);
+            menu.Items.Add(PriorityMenu.Create(note, value => SetNotePriority(id, value)));
+            menu.Items.Add(Strings.Reopen, null, delegate { RestoreNote(id); });
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("删除这张便签…", null, delegate { DeleteNote(id); });
+            menu.Items.Add(Strings.DeleteThisNote, null, delegate { DeleteNote(id); });
             menu.Closed += delegate { menu.BeginInvoke((Action)delegate { menu.Dispose(); }); };
             return menu;
         }
@@ -243,14 +284,18 @@ namespace WinStickies
         {
             var note = Book.Notes.FirstOrDefault(n => n.Id == id); if (note == null) return;
             string title = note.Title; if (title.Length > 40) title = title.Substring(0, 40) + "…";
-            if (confirm && MessageBox.Show("删除“" + title + "”？\n这张便签的内容将被移除。", "删除便签", MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            if (confirm)
+                using (var dialog = new CloseNoteDialog(title, note.VisibleBounds(NoteForm.HeaderHeight), note.Mode == NoteMode.Topmost, true))
+                {
+                    // Own the translated buttons instead of inheriting the OS language.
+                    if (dialog.ShowDialog(sink) != DialogResult.OK || dialog.Choice != CloseNoteChoice.Delete) return;
+                }
             int index = Book.Notes.IndexOf(note);
             Book.Notes.RemoveAt(index); ScheduleSave();
             if (!SaveNow())
             {
                 Book.Notes.Insert(index, note);
-                Report("删除未完成：保存失败，便签仍保留。请检查磁盘空间和文件夹权限。");
+                Report(Strings.DeleteFailed);
                 return;
             }
             CloseNoteWindow(id);
@@ -283,7 +328,7 @@ namespace WinStickies
             catch (Exception ex)
             {
                 if (!(ex is IOException) && !(ex is UnauthorizedAccessException)) throw;
-                LastError = "保存失败，内容仍在内存中。请检查磁盘空间和文件夹权限。";
+                LastError = Strings.SaveFailed;
                 foreach (var window in windows.Values.Where(w => !w.IsDisposed)) window.SetSaveStatus(false);
                 if (library != null) library.UpdateStatus();
                 // Retry without throwing away edits or reporting them as saved.
@@ -320,7 +365,7 @@ namespace WinStickies
         }
         internal void Quit()
         {
-            if (!SaveNow()) { Report("保存尚未成功，便签继续运行。请先解决保存问题再退出。"); return; }
+            if (!SaveNow()) { Report(Strings.QuitFailed); return; }
             exiting = true; shellTimer.Stop(); saveTimer.Stop(); cleanupTimer.Stop();
             foreach (var form in windows.Values.ToArray()) if (!form.IsDisposed) { form.AllowClose = true; form.Close(); form.Dispose(); }
             if (library != null) { var window = library; window.Close(); window.Dispose(); }
